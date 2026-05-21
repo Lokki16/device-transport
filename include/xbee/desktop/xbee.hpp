@@ -4,6 +4,7 @@
 #include "xbee/frames.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
@@ -13,13 +14,21 @@
 
 namespace device_transport
 {
+    enum class XBeeTraceDirection : uint8_t
+    {
+        rx,
+        tx
+    };
+
+    using XBeeTraceCallback = void (*)(XBeeTraceDirection direction, const uint8_t *bytes, size_t size, void *userData);
+
     class XBee
     {
     public:
         XBee() = default;
         ~XBee();
 
-        TransportError open(const std::string &portName, uint32_t baudRate);
+        TransportError open(const std::string &portName, uint32_t baudRate = 9600, api_frame::ApiMode apiMode = api_frame::ApiMode::api1);
         bool isOpen() const;
         void close();
 
@@ -58,6 +67,7 @@ namespace device_transport
         std::vector<RemoteAtCommandResponse> getParsedRemoteAtCommandResponses();
         std::vector<TransmitStatus> getParsedTransmitStatuses();
         std::vector<ModemStatus> getParsedModemStatuses();
+        void setTraceCallback(XBeeTraceCallback callback, void *userData = nullptr);
 
         static uint8_t calculateChecksum(const std::vector<uint8_t> &frameData);
 
@@ -81,6 +91,9 @@ namespace device_transport
         std::mutex _commandMutex;
         std::mutex _atResponseMutex;
         std::condition_variable _atResponseCondition;
+        api_frame::ApiMode _apiMode{api_frame::ApiMode::api1};
+        XBeeTraceCallback _traceCallback{};
+        void *_traceUserData{};
 
         uint8_t _nextFrameId{1};
         bool _pendingAtResponse{};
@@ -96,6 +109,8 @@ namespace device_transport
         bool _readAtCommandData(uint16_t atCommand, std::vector<uint8_t> &data, uint32_t timeoutMs);
 
         static uint8_t _calculateChecksum(const std::vector<uint8_t> &frameData);
+        void _appendEscapedByte(std::vector<uint8_t> &output, uint8_t byte) const;
+        void _trace(XBeeTraceDirection direction, const uint8_t *bytes, size_t size) const;
 
         uint8_t _sendFrameData();
         void _parserLoop();

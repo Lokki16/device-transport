@@ -14,7 +14,7 @@ namespace device_transport
         close();
     }
 
-    TransportError XBee::open(const std::string &portName, const uint32_t baudRate)
+    TransportError XBee::open(const std::string &portName, const uint32_t baudRate, const api_frame::ApiMode apiMode)
     {
         close();
 
@@ -37,6 +37,7 @@ namespace device_transport
         }
 
         _clearFrameData();
+        _apiMode = apiMode;
         _running = true;
         _parserThread = std::thread(&XBee::_parserLoop, this);
         return TransportError::ok;
@@ -371,6 +372,12 @@ namespace device_transport
         return _calculateChecksum(frameData);
     }
 
+    void XBee::setTraceCallback(const XBeeTraceCallback callback, void *userData)
+    {
+        _traceCallback = callback;
+        _traceUserData = userData;
+    }
+
     void XBee::_clearFrameData()
     {
         _frameData.clear();
@@ -446,6 +453,27 @@ namespace device_transport
         return xbee_protocol::calculateChecksum(frameData.data(), frameData.size());
     }
 
+    void XBee::_appendEscapedByte(std::vector<uint8_t> &output, const uint8_t byte) const
+    {
+        if (_apiMode == api_frame::ApiMode::api2 &&
+            (byte == api_frame::startDelimiter || byte == api_frame::escape || byte == api_frame::xon || byte == api_frame::xoff))
+        {
+            output.push_back(api_frame::escape);
+            output.push_back(static_cast<uint8_t>(byte ^ 0x20));
+            return;
+        }
+
+        output.push_back(byte);
+    }
+
+    void XBee::_trace(const XBeeTraceDirection direction, const uint8_t *bytes, const size_t size) const
+    {
+        if (_traceCallback != nullptr && bytes != nullptr && size != 0)
+        {
+            _traceCallback(direction, bytes, size, _traceUserData);
+        }
+    }
+
     uint8_t XBee::_sendFrameData()
     {
         std::vector<uint8_t> frame(_frameData.size() + 4);
@@ -455,19 +483,30 @@ namespace device_transport
             return 1;
         }
 
-        _serialPort.clearOutputBuffer();
-        for (size_t i = 0; i < frameSize; ++i)
+        std::vector<uint8_t> output;
+        output.reserve(frameSize * 2);
+        output.push_back(api_frame::startDelimiter);
+        for (size_t i = 1; i < frameSize; ++i)
         {
-            _serialPort.write8(frame[i]);
+            _appendEscapedByte(output, frame[i]);
+        }
+
+        _serialPort.clearOutputBuffer();
+        for (const uint8_t byte : output)
+        {
+            _serialPort.write8(byte);
         }
 
         const uint32_t writtenSize = _serialPort.send();
-        return writtenSize == frameSize ? 0 : 1;
+        _trace(XBeeTraceDirection::tx, output.data(), output.size());
+        return writtenSize == output.size() ? 0 : 1;
     }
 
     void XBee::_parserLoop()
     {
         xbee_protocol::FrameParser<1024> parser;
+        bool insideFrame = false;
+        bool escapeNext = false;
 
         while (_running)
         {
@@ -478,14 +517,59 @@ namespace device_transport
 
             while (_running && _serialPort.bytesToRead() > 0)
             {
+                uint8_t byte = _serialPort.read8();
+                if (byte == api_frame::startDelimiter)
+                {
+                    if (_apiMode == api_frame::ApiMode::api2)
+                    {
+                        parser.reset();
+                    }
+                    insideFrame = true;
+                    escapeNext = false;
+                }
+                else if (_apiMode == api_frame::ApiMode::api2 && insideFrame)
+                {
+                    if (escapeNext)
+                    {
+                        byte = static_cast<uint8_t>(byte ^ 0x20);
+                        escapeNext = false;
+                    }
+                    else if (byte == api_frame::escape)
+                    {
+                        escapeNext = true;
+                        continue;
+                    }
+                }
+
                 xbee_protocol::FrameView frame;
-                const xbee_protocol::ParseStatus status = parser.process(_serialPort.read8(), frame);
+                const xbee_protocol::ParseStatus status = parser.process(byte, frame);
+                if (status == xbee_protocol::ParseStatus::checksumError || status == xbee_protocol::ParseStatus::frameTooLarge)
+                {
+                    insideFrame = false;
+                    escapeNext = false;
+                    continue;
+                }
+
                 if (status != xbee_protocol::ParseStatus::frameReady || frame.size == 0)
                 {
                     continue;
                 }
 
+                insideFrame = false;
+                escapeNext = false;
+
                 const uint8_t frameType = frame.data[0];
+                std::vector<uint8_t> rawFrame(frame.size + 4);
+                size_t rawFrameSize = 0;
+                if (xbee_protocol::buildFrame(rawFrame.data(), rawFrame.size(), rawFrameSize, frame.data, frame.size))
+                {
+                    rawFrame.resize(rawFrameSize);
+                    _trace(XBeeTraceDirection::rx, rawFrame.data(), rawFrame.size());
+                }
+                else
+                {
+                    _trace(XBeeTraceDirection::rx, frame.data, frame.size);
+                }
 
                 if (frameType == api_frame::type::atCommandResponse && frame.size >= 5)
                 {
@@ -572,6 +656,22 @@ namespace device_transport
                     _parsedPayloadCondition.notify_one();
                     continue;
                 }
+
+                if (frameType == api_frame::type::explicitReceiveIndicator && frame.size >= 18)
+                {
+                    ReceivedXBeeFrame payload;
+                    payload.xbee64Id = byte_codec::read64(frame.data, 1);
+                    payload.xbee16Id = byte_codec::read16(frame.data, 9);
+                    payload.receiveOptions = frame.data[17];
+                    payload.payload.assign(frame.data + 18, frame.data + frame.size);
+                    {
+                        std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
+                        _parsedPayloads.push_back(std::move(payload));
+                    }
+                    _parsedPayloadCondition.notify_one();
+                    continue;
+                }
+
             }
         }
     }

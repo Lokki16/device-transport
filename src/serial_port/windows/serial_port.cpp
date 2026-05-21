@@ -6,6 +6,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -25,7 +26,7 @@ namespace device_transport
             return TransportError::invalidArgument;
         }
 
-        HANDLE handle = CreateFileA(portName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
+        HANDLE handle = CreateFileA(portName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle == INVALID_HANDLE_VALUE)
         {
             return TransportError::openFailed;
@@ -63,11 +64,11 @@ namespace device_transport
         }
 
         COMMTIMEOUTS timeouts{};
-        timeouts.ReadIntervalTimeout = 50;
-        timeouts.ReadTotalTimeoutConstant = 50;
-        timeouts.ReadTotalTimeoutMultiplier = 10;
-        timeouts.WriteTotalTimeoutConstant = 200;
-        timeouts.WriteTotalTimeoutMultiplier = 10;
+        timeouts.ReadIntervalTimeout = MAXDWORD;
+        timeouts.ReadTotalTimeoutConstant = 0;
+        timeouts.ReadTotalTimeoutMultiplier = 0;
+        timeouts.WriteTotalTimeoutConstant = 50;
+        timeouts.WriteTotalTimeoutMultiplier = 0;
         if (!SetCommTimeouts(handle, &timeouts))
         {
             close();
@@ -100,7 +101,6 @@ namespace device_transport
         if (_nativeHandle != nullptr)
         {
             HANDLE handle = static_cast<HANDLE>(_nativeHandle);
-            CancelIoEx(handle, nullptr);
             PurgeComm(handle, PURGE_RXABORT | PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR);
         }
 
@@ -262,6 +262,7 @@ namespace device_transport
             {
                 break;
             }
+
             totalWritten += bytesWritten;
         }
 
@@ -272,39 +273,21 @@ namespace device_transport
     {
         std::vector<uint8_t> chunk(256, 0);
 
-        OVERLAPPED overlapped{};
-        overlapped.hEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-        if (overlapped.hEvent == nullptr)
-        {
-            return;
-        }
-
         while (_running)
         {
-            ResetEvent(overlapped.hEvent);
+            const uint32_t queuedBytes = bytesInDriverQueue();
+            if (queuedBytes == 0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
 
             DWORD receivedSize = 0;
-            const BOOL readStarted = ReadFile(static_cast<HANDLE>(_nativeHandle), chunk.data(), static_cast<DWORD>(chunk.size()), &receivedSize, &overlapped);
-            if (!readStarted)
+            const DWORD bytesToRead = static_cast<DWORD>(std::min<size_t>(chunk.size(), queuedBytes));
+            if (!ReadFile(static_cast<HANDLE>(_nativeHandle), chunk.data(), bytesToRead, &receivedSize, nullptr))
             {
-                const DWORD error = GetLastError();
-                if (error != ERROR_IO_PENDING)
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    continue;
-                }
-
-                const DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 50);
-                if (waitResult != WAIT_OBJECT_0)
-                {
-                    CancelIoEx(static_cast<HANDLE>(_nativeHandle), &overlapped);
-                    continue;
-                }
-
-                if (!GetOverlappedResult(static_cast<HANDLE>(_nativeHandle), &overlapped, &receivedSize, FALSE))
-                {
-                    continue;
-                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
             }
 
             if (receivedSize > 0)
@@ -316,12 +299,6 @@ namespace device_transport
                 _inputCondition.notify_one();
             }
         }
-
-        if (_nativeHandle != nullptr)
-        {
-            CancelIoEx(static_cast<HANDLE>(_nativeHandle), &overlapped);
-        }
-        CloseHandle(overlapped.hEvent);
     }
 }
 

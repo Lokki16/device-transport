@@ -28,6 +28,7 @@ namespace device_transport
             static constexpr uint8_t modemStatus = 0x8A;
             static constexpr uint8_t transmitStatus = 0x8B;
             static constexpr uint8_t receivePacket = 0x90;
+            static constexpr uint8_t explicitReceiveIndicator = 0x91;
             static constexpr uint8_t remoteAtCommandResponse = 0x97;
         }
     }
