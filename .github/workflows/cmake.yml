@@ -1,0 +1,22 @@
+name: cmake
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DDEVICE_TRANSPORT_BUILD_QT_ADAPTER=OFF
+
+      - name: Build
+        run: cmake --build build --config Release

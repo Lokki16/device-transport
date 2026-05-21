@@ -1,0 +1,33 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default",
+            "binaryDir": "${sourceDir}/build/default",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "DEVICE_TRANSPORT_BUILD_QT_ADAPTER": "OFF"
+            }
+        },
+        {
+            "name": "qt",
+            "displayName": "Qt Adapter",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build/qt",
+            "cacheVariables": {
+                "DEVICE_TRANSPORT_BUILD_QT_ADAPTER": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default"
+        },
+        {
+            "name": "qt",
+            "configurePreset": "qt"
+        }
+    ]
+}
