@@ -52,7 +52,8 @@ namespace device_transport
         void writeToOutputPayload(uint64_t input);
 
         std::vector<ReceivedXBeeFrame> getParsedInputPayload();
-        std::vector<ReceivedXBeeFrame> waitAndTakeParsedInputPayload(uint32_t timeoutMs = 100);
+        std::vector<ReceivedXBeeFrame> waitAndTakeParsedInputPayload(uint32_t timeoutMs = 0);
+        void interruptParsedInputPayloadWait();
         std::vector<AtCommandResponse> getParsedAtCommandResponses();
         std::vector<RemoteAtCommandResponse> getParsedRemoteAtCommandResponses();
         std::vector<TransmitStatus> getParsedTransmitStatuses();
@@ -76,6 +77,7 @@ namespace device_transport
         mutable std::mutex _outputPayloadMutex;
         mutable std::mutex _parsedPayloadMutex;
         std::condition_variable _parsedPayloadCondition;
+        bool _parsedPayloadWaitInterrupted{};
         std::mutex _commandMutex;
         std::mutex _atResponseMutex;
         std::condition_variable _atResponseCondition;

@@ -163,6 +163,13 @@ namespace device_transport
     bool SerialPort::waitForInputSize(const size_t byteCount, const uint32_t timeoutMs)
     {
         std::unique_lock<std::mutex> lock(_inputMutex);
+        if (timeoutMs == 0)
+        {
+            _inputCondition.wait(lock, [this, byteCount]
+                                 { return _inputBuffer.size() >= byteCount || !_running; });
+            return _inputBuffer.size() >= byteCount;
+        }
+
         return _inputCondition.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this, byteCount]
                                         { return _inputBuffer.size() >= byteCount || !_running; }) &&
                _inputBuffer.size() >= byteCount;

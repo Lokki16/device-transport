@@ -50,7 +50,7 @@ namespace device_transport
     void XBee::close()
     {
         _running = false;
-        _parsedPayloadCondition.notify_all();
+        interruptParsedInputPayloadWait();
         _atResponseCondition.notify_all();
         _serialPort.close();
 
@@ -305,12 +305,33 @@ namespace device_transport
     std::vector<ReceivedXBeeFrame> XBee::waitAndTakeParsedInputPayload(const uint32_t timeoutMs)
     {
         std::unique_lock<std::mutex> lock(_parsedPayloadMutex);
-        _parsedPayloadCondition.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this]
-                                         { return !_parsedPayloads.empty() || !_running; });
+        const auto canStopWaiting = [this]
+        {
+            return !_parsedPayloads.empty() || !_running || _parsedPayloadWaitInterrupted;
+        };
+
+        if (timeoutMs == 0)
+        {
+            _parsedPayloadCondition.wait(lock, canStopWaiting);
+        }
+        else
+        {
+            _parsedPayloadCondition.wait_for(lock, std::chrono::milliseconds(timeoutMs), canStopWaiting);
+        }
 
         std::vector<ReceivedXBeeFrame> payloads;
         payloads.swap(_parsedPayloads);
+        _parsedPayloadWaitInterrupted = false;
         return payloads;
+    }
+
+    void XBee::interruptParsedInputPayloadWait()
+    {
+        {
+            std::lock_guard<std::mutex> lock(_parsedPayloadMutex);
+            _parsedPayloadWaitInterrupted = true;
+        }
+        _parsedPayloadCondition.notify_all();
     }
 
     std::vector<AtCommandResponse> XBee::getParsedAtCommandResponses()
@@ -450,7 +471,7 @@ namespace device_transport
 
         while (_running)
         {
-            if (!_serialPort.waitForInputSize(1, 100))
+            if (!_serialPort.waitForInputSize(1, 0))
             {
                 continue;
             }
