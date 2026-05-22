@@ -103,7 +103,7 @@ Available CMake targets:
 device_transport::XBee xbee;
 xbee.open("/dev/ttyUSB0", 9600);
 xbee.clearOutputPayload();
-xbee.writeToOutputPayload(static_cast<uint8_t>(0x01));
+xbee.write8(static_cast<uint8_t>(0x01));
 xbee.transmitRequest(0x0013A20000000000ULL);
 ```
 
@@ -139,7 +139,7 @@ xbee.pushReceivedByte(received_byte_from_uart);
 uint32_t result = xbee.xbeeReceive();
 
 xbee.clearOutputPayload();
-xbee.writeToOutputPayload(static_cast<uint8_t>(0x01));
+xbee.write8(static_cast<uint8_t>(0x01));
 xbee.transmitRequest(0x0013A20000000000ULL);
 
 const uint8_t *bytes = xbee.outputData();

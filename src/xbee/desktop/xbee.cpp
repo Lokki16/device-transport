@@ -9,6 +9,11 @@
 
 namespace device_transport
 {
+    namespace
+    {
+        constexpr uint8_t remoteCommandOptions = 0x02;
+    }
+
     XBee::~XBee()
     {
         close();
@@ -30,10 +35,17 @@ namespace device_transport
 
             std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
             _parsedPayloads.clear();
-            _parsedAtCommandResponses.clear();
-            _parsedRemoteAtCommandResponses.clear();
-            _parsedTransmitStatuses.clear();
-            _parsedModemStatuses.clear();
+            _parsedPayloadWaitInterrupted = false;
+        }
+
+        {
+            std::lock_guard<std::mutex> responseLock(_atResponseMutex);
+            _pendingAtResponse = false;
+            _pendingAtResponseCompleted = false;
+            _pendingAtFrameId = 0;
+            _pendingAtCommand = 0;
+            _pendingAtStatus = 0xFF;
+            _pendingAtData.clear();
         }
 
         _clearFrameData();
@@ -89,33 +101,54 @@ namespace device_transport
         return atCommandRequest(at_command::ac);
     }
 
-    bool XBee::readPanId(uint16_t &panId, const uint32_t timeoutMs)
+    bool XBee::readAtCommandData(const uint16_t atCommand, std::vector<uint8_t> &data, const uint32_t timeoutMs)
     {
-        std::vector<uint8_t> data;
-        if (!_readAtCommandData(at_command::oi, data, timeoutMs) || data.size() != 2)
+        uint8_t frameId = 0;
         {
-            return false;
+            std::lock_guard<std::mutex> responseLock(_atResponseMutex);
+            if (_pendingAtResponse)
+            {
+                return false;
+            }
+
+            frameId = _nextFrameIdForRequest();
+            _pendingAtResponse = true;
+            _pendingAtResponseCompleted = false;
+            _pendingAtFrameId = frameId;
+            _pendingAtCommand = atCommand;
+            _pendingAtStatus = 0xFF;
+            _pendingAtData.clear();
         }
 
-        panId = byte_codec::read16(data);
-        return true;
-    }
-
-    bool XBee::readExtendedPanId(uint64_t &extendedPanId, const uint32_t timeoutMs)
-    {
-        std::vector<uint8_t> data;
-        if (!_readAtCommandData(at_command::op, data, timeoutMs) || data.size() != 8)
         {
-            return false;
+            std::lock_guard<std::mutex> commandLock(_commandMutex);
+            _clearFrameData();
+            byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+            byte_codec::write8(_frameData, frameId);
+            byte_codec::write16(_frameData, atCommand);
+            _sendFrameData();
         }
 
-        extendedPanId = byte_codec::read64(data);
-        return true;
+        std::unique_lock<std::mutex> responseLock(_atResponseMutex);
+        const bool success = _atResponseCondition.wait_for(responseLock, std::chrono::milliseconds(timeoutMs), [this]
+                                                           { return _pendingAtResponseCompleted || !_running; }) &&
+                             _pendingAtResponseCompleted &&
+                             _pendingAtStatus == 0;
+
+        if (success)
+        {
+            data = _pendingAtData;
+        }
+
+        _pendingAtResponse = false;
+        _pendingAtResponseCompleted = false;
+        _pendingAtData.clear();
+        return success;
     }
 
     uint8_t XBee::atCommandRequest(const uint16_t atCommand)
     {
-        std::lock_guard<std::mutex> lock(_commandMutex);
+        std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
@@ -125,7 +158,7 @@ namespace device_transport
 
     uint8_t XBee::atCommandRequest(const uint16_t atCommand, const uint8_t value)
     {
-        std::lock_guard<std::mutex> lock(_commandMutex);
+        std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
@@ -136,7 +169,7 @@ namespace device_transport
 
     uint8_t XBee::atCommandRequest(const uint16_t atCommand, const uint16_t value)
     {
-        std::lock_guard<std::mutex> lock(_commandMutex);
+        std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
@@ -147,7 +180,7 @@ namespace device_transport
 
     uint8_t XBee::atCommandRequest(const uint16_t atCommand, const uint32_t value)
     {
-        std::lock_guard<std::mutex> lock(_commandMutex);
+        std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
@@ -158,7 +191,7 @@ namespace device_transport
 
     uint8_t XBee::atCommandRequest(const uint16_t atCommand, const uint64_t value)
     {
-        std::lock_guard<std::mutex> lock(_commandMutex);
+        std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
@@ -167,7 +200,7 @@ namespace device_transport
         return _sendFrameData();
     }
 
-    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint16_t destinationNa, const uint8_t rco)
+    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint16_t destinationNa)
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
@@ -175,12 +208,12 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, rco);
+        byte_codec::write8(_frameData, remoteCommandOptions);
         byte_codec::write16(_frameData, atCommand);
         return _sendFrameData();
     }
 
-    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint8_t value, const uint16_t destinationNa, const uint8_t rco)
+    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint8_t value, const uint16_t destinationNa)
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
@@ -188,13 +221,13 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, rco);
+        byte_codec::write8(_frameData, remoteCommandOptions);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write8(_frameData, value);
         return _sendFrameData();
     }
 
-    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint16_t value, const uint16_t destinationNa, const uint8_t rco)
+    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint16_t value, const uint16_t destinationNa)
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
@@ -202,13 +235,13 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, rco);
+        byte_codec::write8(_frameData, remoteCommandOptions);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write16(_frameData, value);
         return _sendFrameData();
     }
 
-    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint32_t value, const uint16_t destinationNa, const uint8_t rco)
+    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint32_t value, const uint16_t destinationNa)
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
@@ -216,13 +249,13 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, rco);
+        byte_codec::write8(_frameData, remoteCommandOptions);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write32(_frameData, value);
         return _sendFrameData();
     }
 
-    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint64_t value, const uint16_t destinationNa, const uint8_t rco)
+    uint8_t XBee::remoteAtCommandRequest(const uint64_t destinationSn, const uint16_t atCommand, const uint64_t value, const uint16_t destinationNa)
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
@@ -230,7 +263,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, rco);
+        byte_codec::write8(_frameData, remoteCommandOptions);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write64(_frameData, value);
         return _sendFrameData();
@@ -244,11 +277,6 @@ namespace device_transport
             payload.swap(_outputPayload);
         }
 
-        return transmitRequest(destinationSn, payload, destinationNa, broadcastRadius, options);
-    }
-
-    uint8_t XBee::transmitRequest(const uint64_t destinationSn, const std::vector<uint8_t> &payload, const uint16_t destinationNa, const uint8_t broadcastRadius, const uint8_t options)
-    {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
         byte_codec::write8(_frameData, api_frame::type::transmitRequest);
@@ -271,25 +299,25 @@ namespace device_transport
         _outputPayload.clear();
     }
 
-    void XBee::writeToOutputPayload(const uint8_t input)
+    void XBee::write8(const uint8_t input)
     {
         std::lock_guard<std::mutex> lock(_outputPayloadMutex);
         byte_codec::write8(_outputPayload, input);
     }
 
-    void XBee::writeToOutputPayload(const uint16_t input)
+    void XBee::write16(const uint16_t input)
     {
         std::lock_guard<std::mutex> lock(_outputPayloadMutex);
         byte_codec::write16(_outputPayload, input);
     }
 
-    void XBee::writeToOutputPayload(const uint32_t input)
+    void XBee::write32(const uint32_t input)
     {
         std::lock_guard<std::mutex> lock(_outputPayloadMutex);
         byte_codec::write32(_outputPayload, input);
     }
 
-    void XBee::writeToOutputPayload(const uint64_t input)
+    void XBee::write64(const uint64_t input)
     {
         std::lock_guard<std::mutex> lock(_outputPayloadMutex);
         byte_codec::write64(_outputPayload, input);
@@ -335,43 +363,6 @@ namespace device_transport
         _parsedPayloadCondition.notify_all();
     }
 
-    std::vector<AtCommandResponse> XBee::getParsedAtCommandResponses()
-    {
-        std::lock_guard<std::mutex> lock(_parsedPayloadMutex);
-        std::vector<AtCommandResponse> responses;
-        responses.swap(_parsedAtCommandResponses);
-        return responses;
-    }
-
-    std::vector<RemoteAtCommandResponse> XBee::getParsedRemoteAtCommandResponses()
-    {
-        std::lock_guard<std::mutex> lock(_parsedPayloadMutex);
-        std::vector<RemoteAtCommandResponse> responses;
-        responses.swap(_parsedRemoteAtCommandResponses);
-        return responses;
-    }
-
-    std::vector<TransmitStatus> XBee::getParsedTransmitStatuses()
-    {
-        std::lock_guard<std::mutex> lock(_parsedPayloadMutex);
-        std::vector<TransmitStatus> statuses;
-        statuses.swap(_parsedTransmitStatuses);
-        return statuses;
-    }
-
-    std::vector<ModemStatus> XBee::getParsedModemStatuses()
-    {
-        std::lock_guard<std::mutex> lock(_parsedPayloadMutex);
-        std::vector<ModemStatus> statuses;
-        statuses.swap(_parsedModemStatuses);
-        return statuses;
-    }
-
-    uint8_t XBee::calculateChecksum(const std::vector<uint8_t> &frameData)
-    {
-        return _calculateChecksum(frameData);
-    }
-
     void XBee::setTraceCallback(const XBeeTraceCallback callback, void *userData)
     {
         _traceCallback = callback;
@@ -383,95 +374,19 @@ namespace device_transport
         _frameData.clear();
     }
 
-    uint8_t XBee::_nextAtFrameId()
+    uint8_t XBee::_nextFrameIdForRequest()
     {
-        return _nextFrameIdForRequest(true);
-    }
-
-    uint8_t XBee::_nextFrameIdForRequest(const bool assignId)
-    {
-        if (!assignId)
-        {
-            return 0;
-        }
-
-        if (_nextFrameId == 0)
+        if (_nextFrameId == 0 || _nextFrameId == 0xFF)
         {
             _nextFrameId = 1;
         }
 
-        return _nextFrameId++;
-    }
-
-    bool XBee::_readAtCommandData(const uint16_t atCommand, std::vector<uint8_t> &data, const uint32_t timeoutMs)
-    {
-        uint8_t frameId = 0;
+        const uint8_t frameId = _nextFrameId++;
+        if (_nextFrameId == 0xFF)
         {
-            std::lock_guard<std::mutex> responseLock(_atResponseMutex);
-            if (_pendingAtResponse)
-            {
-                return false;
-            }
-
-            frameId = _nextAtFrameId();
-            _pendingAtResponse = true;
-            _pendingAtResponseCompleted = false;
-            _pendingAtFrameId = frameId;
-            _pendingAtCommand = atCommand;
-            _pendingAtStatus = 0xFF;
-            _pendingAtData.clear();
+            _nextFrameId = 1;
         }
-
-        {
-            std::lock_guard<std::mutex> commandLock(_commandMutex);
-            _clearFrameData();
-            byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
-            byte_codec::write8(_frameData, frameId);
-            byte_codec::write16(_frameData, atCommand);
-            _sendFrameData();
-        }
-
-        std::unique_lock<std::mutex> responseLock(_atResponseMutex);
-        const bool success = _atResponseCondition.wait_for(responseLock, std::chrono::milliseconds(timeoutMs), [this]
-                                                           { return _pendingAtResponseCompleted || !_running; }) &&
-                             _pendingAtResponseCompleted &&
-                             _pendingAtStatus == 0;
-
-        if (success)
-        {
-            data = _pendingAtData;
-        }
-
-        _pendingAtResponse = false;
-        _pendingAtResponseCompleted = false;
-        _pendingAtData.clear();
-        return success;
-    }
-
-    uint8_t XBee::_calculateChecksum(const std::vector<uint8_t> &frameData)
-    {
-        return xbee_protocol::calculateChecksum(frameData.data(), frameData.size());
-    }
-
-    void XBee::_appendEscapedByte(std::vector<uint8_t> &output, const uint8_t byte) const
-    {
-        if (_apiMode == api_frame::ApiMode::api2 &&
-            (byte == api_frame::startDelimiter || byte == api_frame::escape || byte == api_frame::xon || byte == api_frame::xoff))
-        {
-            output.push_back(api_frame::escape);
-            output.push_back(static_cast<uint8_t>(byte ^ 0x20));
-            return;
-        }
-
-        output.push_back(byte);
-    }
-
-    void XBee::_trace(const XBeeTraceDirection direction, const uint8_t *bytes, const size_t size) const
-    {
-        if (_traceCallback != nullptr && bytes != nullptr && size != 0)
-        {
-            _traceCallback(direction, bytes, size, _traceUserData);
-        }
+        return frameId;
     }
 
     uint8_t XBee::_sendFrameData()
@@ -500,6 +415,27 @@ namespace device_transport
         const uint32_t writtenSize = _serialPort.send();
         _trace(XBeeTraceDirection::tx, output.data(), output.size());
         return writtenSize == output.size() ? 0 : 1;
+    }
+
+    void XBee::_appendEscapedByte(std::vector<uint8_t> &output, const uint8_t byte) const
+    {
+        if (_apiMode == api_frame::ApiMode::api2 &&
+            (byte == api_frame::startDelimiter || byte == api_frame::escape || byte == api_frame::xon || byte == api_frame::xoff))
+        {
+            output.push_back(api_frame::escape);
+            output.push_back(static_cast<uint8_t>(byte ^ 0x20));
+            return;
+        }
+
+        output.push_back(byte);
+    }
+
+    void XBee::_trace(const XBeeTraceDirection direction, const uint8_t *bytes, const size_t size) const
+    {
+        if (_traceCallback != nullptr && bytes != nullptr && size != 0)
+        {
+            _traceCallback(direction, bytes, size, _traceUserData);
+        }
     }
 
     void XBee::_parserLoop()
@@ -573,72 +509,21 @@ namespace device_transport
 
                 if (frameType == api_frame::type::atCommandResponse && frame.size >= 5)
                 {
-                    AtCommandResponse response;
-                    response.frameId = frame.data[1];
-                    response.atCommand = byte_codec::read16(frame.data, 2);
-                    response.status = frame.data[4];
-                    response.value.assign(frame.data + 5, frame.data + frame.size);
-
-                    {
-                        std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
-                        _parsedAtCommandResponses.push_back(response);
-                    }
-
+                    const uint8_t frameId = frame.data[1];
+                    const uint16_t atCommand = byte_codec::read16(frame.data, 2);
+                    const uint8_t commandStatus = frame.data[4];
+                    std::vector<uint8_t> commandData(frame.data + 5, frame.data + frame.size);
                     {
                         std::lock_guard<std::mutex> responseLock(_atResponseMutex);
-                        if (_pendingAtResponse && _pendingAtFrameId == response.frameId && _pendingAtCommand == response.atCommand)
+                        if (_pendingAtResponse && _pendingAtFrameId == frameId && _pendingAtCommand == atCommand)
                         {
-                            _pendingAtStatus = response.status;
-                            _pendingAtData = response.value;
+                            _pendingAtStatus = commandStatus;
+                            _pendingAtData = std::move(commandData);
                             _pendingAtResponseCompleted = true;
                             _atResponseCondition.notify_all();
                         }
                     }
-                    continue;
-                }
 
-                if (frameType == api_frame::type::modemStatus && frame.size >= 2)
-                {
-                    ModemStatus statusFrame;
-                    statusFrame.status = frame.data[1];
-                    {
-                        std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
-                        _parsedModemStatuses.push_back(statusFrame);
-                    }
-                    _parsedPayloadCondition.notify_one();
-                    continue;
-                }
-
-                if (frameType == api_frame::type::transmitStatus && frame.size >= 7)
-                {
-                    TransmitStatus statusFrame;
-                    statusFrame.frameId = frame.data[1];
-                    statusFrame.destinationAddress = byte_codec::read16(frame.data, 2);
-                    statusFrame.retryCount = frame.data[4];
-                    statusFrame.deliveryStatus = frame.data[5];
-                    statusFrame.discoveryStatus = frame.data[6];
-                    {
-                        std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
-                        _parsedTransmitStatuses.push_back(statusFrame);
-                    }
-                    _parsedPayloadCondition.notify_one();
-                    continue;
-                }
-
-                if (frameType == api_frame::type::remoteAtCommandResponse && frame.size >= 15)
-                {
-                    RemoteAtCommandResponse response;
-                    response.frameId = frame.data[1];
-                    response.xbee64Id = byte_codec::read64(frame.data, 2);
-                    response.xbee16Id = byte_codec::read16(frame.data, 10);
-                    response.atCommand = byte_codec::read16(frame.data, 12);
-                    response.status = frame.data[14];
-                    response.value.assign(frame.data + 15, frame.data + frame.size);
-                    {
-                        std::lock_guard<std::mutex> payloadLock(_parsedPayloadMutex);
-                        _parsedRemoteAtCommandResponses.push_back(std::move(response));
-                    }
-                    _parsedPayloadCondition.notify_one();
                     continue;
                 }
 
@@ -671,7 +556,6 @@ namespace device_transport
                     _parsedPayloadCondition.notify_one();
                     continue;
                 }
-
             }
         }
     }

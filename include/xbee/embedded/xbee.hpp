@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/byte_codec_core.hpp"
+#include "core/byte_codec.hpp"
 #include "xbee/constants.hpp"
 #include "xbee/parameters.hpp"
 #include "xbee/protocol.hpp"
