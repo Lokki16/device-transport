@@ -47,11 +47,7 @@ namespace device_transport
         uint32_t send();
 
     private:
-#ifdef _WIN32
         void *_nativeHandle = nullptr;
-#else
-        int _fileDescriptor = -1;
-#endif
 
         std::atomic<bool> _running{false};
         std::thread _readerThread;
