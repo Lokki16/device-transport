@@ -1,5 +1,3 @@
-#ifdef _WIN32
-
 #include "serial_port/serial_port.hpp"
 
 #include "core/byte_codec.hpp"
@@ -301,5 +299,3 @@ namespace device_transport
         }
     }
 }
-
-#endif

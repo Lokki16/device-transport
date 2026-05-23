@@ -68,6 +68,5 @@ namespace device_transport
             buffer.push_back(static_cast<uint8_t>(value >> 8));
             buffer.push_back(static_cast<uint8_t>(value));
         }
-
     }
 }

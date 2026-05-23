@@ -47,5 +47,4 @@ namespace device_transport
     {
         uint8_t status{};
     };
-
 }
