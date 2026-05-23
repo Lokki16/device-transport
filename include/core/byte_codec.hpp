@@ -13,9 +13,14 @@ namespace device_transport
             return bytes[offset];
         }
 
-        inline uint16_t read16(const std::vector<uint8_t> &bytes, const size_t offset = 0)
+        inline uint16_t read16(const uint8_t *bytes, const size_t offset = 0)
         {
             return static_cast<uint16_t>((static_cast<uint16_t>(bytes[offset]) << 8) | bytes[offset + 1]);
+        }
+
+        inline uint16_t read16(const std::vector<uint8_t> &bytes, const size_t offset = 0)
+        {
+            return read16(bytes.data(), offset);
         }
 
         inline uint32_t read32(const std::vector<uint8_t> &bytes, const size_t offset = 0)
@@ -26,7 +31,7 @@ namespace device_transport
                    static_cast<uint32_t>(bytes[offset + 3]);
         }
 
-        inline uint64_t read64(const std::vector<uint8_t> &bytes, const size_t offset = 0)
+        inline uint64_t read64(const uint8_t *bytes, const size_t offset = 0)
         {
             return (static_cast<uint64_t>(bytes[offset]) << 56) |
                    (static_cast<uint64_t>(bytes[offset + 1]) << 48) |
@@ -36,6 +41,11 @@ namespace device_transport
                    (static_cast<uint64_t>(bytes[offset + 5]) << 16) |
                    (static_cast<uint64_t>(bytes[offset + 6]) << 8) |
                    static_cast<uint64_t>(bytes[offset + 7]);
+        }
+
+        inline uint64_t read64(const std::vector<uint8_t> &bytes, const size_t offset = 0)
+        {
+            return read64(bytes.data(), offset);
         }
 
         inline void write8(std::vector<uint8_t> &buffer, const uint8_t value)

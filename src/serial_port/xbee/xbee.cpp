@@ -12,23 +12,6 @@ namespace device_transport
     namespace
     {
         constexpr uint8_t remoteCommandOptions = 0x02;
-
-        uint16_t readFrame16(const uint8_t *bytes, const size_t offset)
-        {
-            return static_cast<uint16_t>((static_cast<uint16_t>(bytes[offset]) << 8) | bytes[offset + 1]);
-        }
-
-        uint64_t readFrame64(const uint8_t *bytes, const size_t offset)
-        {
-            return (static_cast<uint64_t>(bytes[offset]) << 56) |
-                   (static_cast<uint64_t>(bytes[offset + 1]) << 48) |
-                   (static_cast<uint64_t>(bytes[offset + 2]) << 40) |
-                   (static_cast<uint64_t>(bytes[offset + 3]) << 32) |
-                   (static_cast<uint64_t>(bytes[offset + 4]) << 24) |
-                   (static_cast<uint64_t>(bytes[offset + 5]) << 16) |
-                   (static_cast<uint64_t>(bytes[offset + 6]) << 8) |
-                   static_cast<uint64_t>(bytes[offset + 7]);
-        }
     }
 
     XBee::~XBee()
@@ -527,7 +510,7 @@ namespace device_transport
                 if (frameType == api_frame::type::atCommandResponse && frame.size >= 5)
                 {
                     const uint8_t frameId = frame.data[1];
-                    const uint16_t atCommand = readFrame16(frame.data, 2);
+                    const uint16_t atCommand = byte_codec::read16(frame.data, 2);
                     const uint8_t commandStatus = frame.data[4];
                     std::vector<uint8_t> commandData(frame.data + 5, frame.data + frame.size);
                     {
@@ -547,8 +530,8 @@ namespace device_transport
                 if (frameType == api_frame::type::receivePacket && frame.size >= 12)
                 {
                     ReceivedXBeeFrame payload;
-                    payload.xbee64Id = readFrame64(frame.data, 1);
-                    payload.xbee16Id = readFrame16(frame.data, 9);
+                    payload.xbee64Id = byte_codec::read64(frame.data, 1);
+                    payload.xbee16Id = byte_codec::read16(frame.data, 9);
                     payload.receiveOptions = frame.data[11];
                     payload.payload.assign(frame.data + 12, frame.data + frame.size);
                     {
@@ -562,8 +545,8 @@ namespace device_transport
                 if (frameType == api_frame::type::explicitReceiveIndicator && frame.size >= 18)
                 {
                     ReceivedXBeeFrame payload;
-                    payload.xbee64Id = readFrame64(frame.data, 1);
-                    payload.xbee16Id = readFrame16(frame.data, 9);
+                    payload.xbee64Id = byte_codec::read64(frame.data, 1);
+                    payload.xbee16Id = byte_codec::read16(frame.data, 9);
                     payload.receiveOptions = frame.data[17];
                     payload.payload.assign(frame.data + 18, frame.data + frame.size);
                     {
