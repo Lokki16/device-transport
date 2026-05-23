@@ -1,7 +1,7 @@
 #pragma once
 
 #include "core/byte_codec.hpp"
-#include "xbee/constants.hpp"
+#include "serial_port/xbee/constants.hpp"
 
 #include <cstddef>
 #include <cstdint>

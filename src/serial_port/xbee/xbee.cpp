@@ -1,7 +1,7 @@
-#include "xbee/desktop/xbee.hpp"
+#include "serial_port/xbee/xbee.hpp"
 
 #include "core/byte_codec.hpp"
-#include "xbee/protocol.hpp"
+#include "serial_port/xbee/protocol.hpp"
 
 #include <chrono>
 #include <thread>

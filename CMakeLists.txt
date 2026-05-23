@@ -2,15 +2,11 @@ cmake_minimum_required(VERSION 3.20)
 
 project(device_transport VERSION 0.1.0 LANGUAGES CXX)
 
-option(DEVICE_TRANSPORT_BUILD_QT_ADAPTER "Build the optional Qt adapter" OFF)
-
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
-if(WIN32)
-    set(device_transport_SERIAL_SOURCE src/serial_port/windows/serial_port.cpp)
-else()
-    set(device_transport_SERIAL_SOURCE src/serial_port/unix/serial_port.cpp)
+if(NOT WIN32)
+    message(FATAL_ERROR "device_transport currently supports Windows only")
 endif()
 
 add_library(device_transport_core INTERFACE)
@@ -32,21 +28,8 @@ set_target_properties(device_transport_core
         EXPORT_NAME core
 )
 
-add_library(device_transport_embedded INTERFACE)
-add_library(device_transport::embedded ALIAS device_transport_embedded)
-
-target_link_libraries(device_transport_embedded
-    INTERFACE
-        device_transport_core
-)
-
-set_target_properties(device_transport_embedded
-    PROPERTIES
-        EXPORT_NAME embedded
-)
-
 add_library(device_transport_serial
-    ${device_transport_SERIAL_SOURCE}
+    src/serial_port/serial_port.cpp
 )
 
 add_library(device_transport::serial ALIAS device_transport_serial)
@@ -67,7 +50,7 @@ set_target_properties(device_transport_serial
 )
 
 add_library(device_transport_desktop
-    src/xbee/desktop/xbee.cpp
+    src/serial_port/xbee/xbee.cpp
 )
 
 add_library(device_transport::desktop ALIAS device_transport_desktop)
@@ -88,13 +71,6 @@ set_target_properties(device_transport_desktop
         EXPORT_NAME desktop
 )
 
-if(UNIX AND NOT APPLE)
-    target_link_libraries(device_transport_serial
-        PUBLIC
-            pthread
-    )
-endif()
-
 add_library(device_transport INTERFACE)
 add_library(device_transport::device_transport ALIAS device_transport)
 
@@ -108,47 +84,9 @@ set_target_properties(device_transport
         EXPORT_NAME device_transport
 )
 
-if(DEVICE_TRANSPORT_BUILD_QT_ADAPTER)
-    find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core SerialPort)
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core SerialPort)
-
-    add_library(device_transport_qt
-        src/xbee/qt/qxbee.cpp
-    )
-
-    add_library(device_transport::qt ALIAS device_transport_qt)
-
-    target_link_libraries(device_transport_qt
-        PUBLIC
-            device_transport_core
-            Qt${QT_VERSION_MAJOR}::Core
-            Qt${QT_VERSION_MAJOR}::SerialPort
-    )
-
-    target_compile_features(device_transport_qt
-        PUBLIC
-            cxx_std_11
-    )
-
-    set_target_properties(device_transport_qt
-        PROPERTIES
-            EXPORT_NAME qt
-    )
-
-    install(TARGETS device_transport_qt
-        EXPORT device_transportTargets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    )
-
-endif()
-
 install(TARGETS
     device_transport
     device_transport_core
-    device_transport_embedded
     device_transport_serial
     device_transport_desktop
     EXPORT device_transportTargets

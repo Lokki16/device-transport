@@ -1,7 +1,7 @@
 #pragma once
 
 #include "serial_port/serial_port.hpp"
-#include "xbee/frames.hpp"
+#include "serial_port/xbee/frames.hpp"
 
 #include <atomic>
 #include <cstddef>
