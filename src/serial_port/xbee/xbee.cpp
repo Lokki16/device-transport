@@ -386,17 +386,16 @@ namespace device_transport
 
     uint8_t XBee::_sendFrameData()
     {
-        std::vector<uint8_t> frame(_frameData.size() + 4);
-        size_t frameSize = 0;
-        if (!xbee_protocol::buildFrame(frame.data(), frame.size(), frameSize, _frameData.data(), _frameData.size()))
+        std::vector<uint8_t> frame;
+        if (!xbee_protocol::buildFrame(frame, _frameData))
         {
             return 1;
         }
 
         std::vector<uint8_t> output;
-        output.reserve(frameSize * 2);
+        output.reserve(frame.size() * 2);
         output.push_back(api_frame::startDelimiter);
-        for (size_t i = 1; i < frameSize; ++i)
+        for (size_t i = 1; i < frame.size(); ++i)
         {
             _appendEscapedByte(output, frame[i]);
         }
@@ -491,11 +490,9 @@ namespace device_transport
 
                 const uint8_t frameType = frame.data[0];
                 const std::vector<uint8_t> frameData(frame.data, frame.data + frame.size);
-                std::vector<uint8_t> rawFrame(frame.size + 4);
-                size_t rawFrameSize = 0;
-                if (xbee_protocol::buildFrame(rawFrame.data(), rawFrame.size(), rawFrameSize, frame.data, frame.size))
+                std::vector<uint8_t> rawFrame;
+                if (xbee_protocol::buildFrame(rawFrame, frameData))
                 {
-                    rawFrame.resize(rawFrameSize);
                     _trace(SerialTraceDirection::rx, rawFrame.data(), rawFrame.size());
                 }
                 else

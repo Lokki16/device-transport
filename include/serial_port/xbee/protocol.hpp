@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace device_transport
 {
@@ -33,46 +34,21 @@ namespace device_transport
             return static_cast<uint8_t>(0xFF - (sum & 0xFF));
         }
 
-        inline bool write8(uint8_t *output, const size_t capacity, size_t &outputSize, const uint8_t value)
+        inline bool buildFrame(std::vector<uint8_t> &output, const std::vector<uint8_t> &frameData)
         {
-            if (outputSize + 1 > capacity)
+            output.clear();
+            if (frameData.size() > 0xFFFF)
             {
                 return false;
             }
 
-            output[outputSize++] = value;
+            output.reserve(frameData.size() + 4);
+            output.push_back(api_frame::startDelimiter);
+            output.push_back(static_cast<uint8_t>(frameData.size() >> 8));
+            output.push_back(static_cast<uint8_t>(frameData.size()));
+            output.insert(output.end(), frameData.begin(), frameData.end());
+            output.push_back(calculateChecksum(frameData.data(), frameData.size()));
             return true;
-        }
-
-        inline bool write16(uint8_t *output, const size_t capacity, size_t &outputSize, const uint16_t value)
-        {
-            return write8(output, capacity, outputSize, static_cast<uint8_t>(value >> 8)) &&
-                   write8(output, capacity, outputSize, static_cast<uint8_t>(value));
-        }
-
-        inline bool buildFrame(uint8_t *output, const size_t capacity, size_t &outputSize, const uint8_t *frameData, const size_t frameSize)
-        {
-            outputSize = 0;
-            if (frameSize > 0xFFFF || (frameSize != 0 && frameData == nullptr))
-            {
-                return false;
-            }
-
-            if (!write8(output, capacity, outputSize, api_frame::startDelimiter) ||
-                !write16(output, capacity, outputSize, static_cast<uint16_t>(frameSize)))
-            {
-                return false;
-            }
-
-            for (size_t i = 0; i < frameSize; ++i)
-            {
-                if (!write8(output, capacity, outputSize, frameData[i]))
-                {
-                    return false;
-                }
-            }
-
-            return write8(output, capacity, outputSize, calculateChecksum(frameData, frameSize));
         }
 
         template <size_t FrameCapacity>
