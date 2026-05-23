@@ -1,6 +1,7 @@
 #pragma once
 
 #include "serial_port/serial_port.hpp"
+#include "serial_port/trace.hpp"
 #include "serial_port/xbee/frames.hpp"
 
 #include <atomic>
@@ -14,13 +15,7 @@
 
 namespace device_transport
 {
-    enum class XBeeTraceDirection : uint8_t
-    {
-        rx,
-        tx
-    };
-
-    using XBeeTraceCallback = void (*)(XBeeTraceDirection direction, const uint8_t *bytes, size_t size, void *userData);
+    using XBeeTraceCallback = void (*)(SerialTraceDirection direction, const uint8_t *bytes, size_t size, void *userData);
 
     class XBee
     {
@@ -97,7 +92,7 @@ namespace device_transport
         uint8_t _sendFrameData();
 
         void _appendEscapedByte(std::vector<uint8_t> &output, uint8_t byte) const;
-        void _trace(XBeeTraceDirection direction, const uint8_t *bytes, size_t size) const;
+        void _trace(SerialTraceDirection direction, const uint8_t *bytes, size_t size) const;
 
         void _parserLoop();
     };

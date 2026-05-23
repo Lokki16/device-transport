@@ -1,6 +1,5 @@
 #pragma once
 
-#include "core/byte_codec.hpp"
 #include "serial_port/xbee/constants.hpp"
 
 #include <cstddef>
@@ -34,6 +33,23 @@ namespace device_transport
             return static_cast<uint8_t>(0xFF - (sum & 0xFF));
         }
 
+        inline bool appendByte(uint8_t *output, const size_t capacity, size_t &outputSize, const uint8_t value)
+        {
+            if (outputSize + 1 > capacity)
+            {
+                return false;
+            }
+
+            output[outputSize++] = value;
+            return true;
+        }
+
+        inline bool appendUint16(uint8_t *output, const size_t capacity, size_t &outputSize, const uint16_t value)
+        {
+            return appendByte(output, capacity, outputSize, static_cast<uint8_t>(value >> 8)) &&
+                   appendByte(output, capacity, outputSize, static_cast<uint8_t>(value));
+        }
+
         inline bool buildFrame(uint8_t *output, const size_t capacity, size_t &outputSize, const uint8_t *frameData, const size_t frameSize)
         {
             outputSize = 0;
@@ -42,21 +58,21 @@ namespace device_transport
                 return false;
             }
 
-            if (!byte_codec::write8(output, capacity, outputSize, api_frame::startDelimiter) ||
-                !byte_codec::write16(output, capacity, outputSize, static_cast<uint16_t>(frameSize)))
+            if (!appendByte(output, capacity, outputSize, api_frame::startDelimiter) ||
+                !appendUint16(output, capacity, outputSize, static_cast<uint16_t>(frameSize)))
             {
                 return false;
             }
 
             for (size_t i = 0; i < frameSize; ++i)
             {
-                if (!byte_codec::write8(output, capacity, outputSize, frameData[i]))
+                if (!appendByte(output, capacity, outputSize, frameData[i]))
                 {
                     return false;
                 }
             }
 
-            return byte_codec::write8(output, capacity, outputSize, calculateChecksum(frameData, frameSize));
+            return appendByte(output, capacity, outputSize, calculateChecksum(frameData, frameSize));
         }
 
         template <size_t FrameCapacity>
