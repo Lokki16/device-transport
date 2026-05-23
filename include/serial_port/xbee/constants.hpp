@@ -11,6 +11,7 @@ namespace device_transport
         static constexpr uint8_t xon = 0x11;
         static constexpr uint8_t xoff = 0x13;
         static constexpr uint8_t defaultFrameId = 0x00;
+        static constexpr uint8_t remoteCommandOptionsApplyChanges = 0x02;
 
         enum class ApiMode : uint8_t
         {

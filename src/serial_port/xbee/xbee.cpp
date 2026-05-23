@@ -9,11 +9,6 @@
 
 namespace device_transport
 {
-    namespace
-    {
-        constexpr uint8_t remoteCommandOptions = 0x02;
-    }
-
     XBee::~XBee()
     {
         close();
@@ -208,7 +203,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, remoteCommandOptions);
+        byte_codec::write8(_frameData, api_frame::remoteCommandOptionsApplyChanges);
         byte_codec::write16(_frameData, atCommand);
         return _sendFrameData();
     }
@@ -221,7 +216,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, remoteCommandOptions);
+        byte_codec::write8(_frameData, api_frame::remoteCommandOptionsApplyChanges);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write8(_frameData, value);
         return _sendFrameData();
@@ -235,7 +230,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, remoteCommandOptions);
+        byte_codec::write8(_frameData, api_frame::remoteCommandOptionsApplyChanges);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write16(_frameData, value);
         return _sendFrameData();
@@ -249,7 +244,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, remoteCommandOptions);
+        byte_codec::write8(_frameData, api_frame::remoteCommandOptionsApplyChanges);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write32(_frameData, value);
         return _sendFrameData();
@@ -263,7 +258,7 @@ namespace device_transport
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
-        byte_codec::write8(_frameData, remoteCommandOptions);
+        byte_codec::write8(_frameData, api_frame::remoteCommandOptionsApplyChanges);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write64(_frameData, value);
         return _sendFrameData();
@@ -495,6 +490,7 @@ namespace device_transport
                 escapeNext = false;
 
                 const uint8_t frameType = frame.data[0];
+                const std::vector<uint8_t> frameData(frame.data, frame.data + frame.size);
                 std::vector<uint8_t> rawFrame(frame.size + 4);
                 size_t rawFrameSize = 0;
                 if (xbee_protocol::buildFrame(rawFrame.data(), rawFrame.size(), rawFrameSize, frame.data, frame.size))
@@ -510,7 +506,7 @@ namespace device_transport
                 if (frameType == api_frame::type::atCommandResponse && frame.size >= 5)
                 {
                     const uint8_t frameId = frame.data[1];
-                    const uint16_t atCommand = byte_codec::read16(frame.data, 2);
+                    const uint16_t atCommand = byte_codec::read16(frameData, 2);
                     const uint8_t commandStatus = frame.data[4];
                     std::vector<uint8_t> commandData(frame.data + 5, frame.data + frame.size);
                     {
@@ -530,8 +526,8 @@ namespace device_transport
                 if (frameType == api_frame::type::receivePacket && frame.size >= 12)
                 {
                     ReceivedXBeeFrame payload;
-                    payload.xbee64Id = byte_codec::read64(frame.data, 1);
-                    payload.xbee16Id = byte_codec::read16(frame.data, 9);
+                    payload.xbee64Id = byte_codec::read64(frameData, 1);
+                    payload.xbee16Id = byte_codec::read16(frameData, 9);
                     payload.receiveOptions = frame.data[11];
                     payload.payload.assign(frame.data + 12, frame.data + frame.size);
                     {
@@ -545,8 +541,8 @@ namespace device_transport
                 if (frameType == api_frame::type::explicitReceiveIndicator && frame.size >= 18)
                 {
                     ReceivedXBeeFrame payload;
-                    payload.xbee64Id = byte_codec::read64(frame.data, 1);
-                    payload.xbee16Id = byte_codec::read16(frame.data, 9);
+                    payload.xbee64Id = byte_codec::read64(frameData, 1);
+                    payload.xbee16Id = byte_codec::read16(frameData, 9);
                     payload.receiveOptions = frame.data[17];
                     payload.payload.assign(frame.data + 18, frame.data + frame.size);
                     {
