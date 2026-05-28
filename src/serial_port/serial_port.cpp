@@ -24,53 +24,13 @@ namespace device_transport
             return TransportError::invalidArgument;
         }
 
-        HANDLE handle = CreateFileA(portName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (handle == INVALID_HANDLE_VALUE)
+        _portName = portName;
+        _baudRate = baudRate;
+
+        const TransportError openResult = _openNativeHandle();
+        if (openResult != TransportError::ok)
         {
-            return TransportError::openFailed;
-        }
-
-        _nativeHandle = handle;
-
-        DCB dcb{};
-        dcb.DCBlength = sizeof(dcb);
-        if (!GetCommState(handle, &dcb))
-        {
-            close();
-            return TransportError::stateReadFailed;
-        }
-
-        dcb.BaudRate = static_cast<DWORD>(baudRate);
-        dcb.ByteSize = 8;
-        dcb.StopBits = ONESTOPBIT;
-        dcb.Parity = NOPARITY;
-        dcb.fBinary = TRUE;
-        dcb.fParity = FALSE;
-        dcb.fOutxCtsFlow = FALSE;
-        dcb.fOutxDsrFlow = FALSE;
-        dcb.fDsrSensitivity = FALSE;
-        dcb.fOutX = FALSE;
-        dcb.fInX = FALSE;
-        dcb.fAbortOnError = FALSE;
-        dcb.fDtrControl = DTR_CONTROL_DISABLE;
-        dcb.fRtsControl = RTS_CONTROL_DISABLE;
-
-        if (!SetCommState(handle, &dcb))
-        {
-            close();
-            return TransportError::configureFailed;
-        }
-
-        COMMTIMEOUTS timeouts{};
-        timeouts.ReadIntervalTimeout = MAXDWORD;
-        timeouts.ReadTotalTimeoutConstant = 0;
-        timeouts.ReadTotalTimeoutMultiplier = 0;
-        timeouts.WriteTotalTimeoutConstant = 50;
-        timeouts.WriteTotalTimeoutMultiplier = 0;
-        if (!SetCommTimeouts(handle, &timeouts))
-        {
-            close();
-            return TransportError::timeoutConfigureFailed;
+            return openResult;
         }
 
         {
@@ -88,7 +48,8 @@ namespace device_transport
 
     bool SerialPort::isOpen() const
     {
-        return _nativeHandle != nullptr;
+        std::lock_guard<std::mutex> lock(_nativeHandleMutex);
+        return _nativeHandle != nullptr && !_connectionLost;
     }
 
     void SerialPort::close()
@@ -96,21 +57,11 @@ namespace device_transport
         _running = false;
         _inputCondition.notify_all();
 
-        if (_nativeHandle != nullptr)
-        {
-            HANDLE handle = static_cast<HANDLE>(_nativeHandle);
-            PurgeComm(handle, PURGE_RXABORT | PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR);
-        }
+        _closeNativeHandle();
 
         if (_readerThread.joinable())
         {
             _readerThread.join();
-        }
-
-        if (_nativeHandle != nullptr)
-        {
-            CloseHandle(static_cast<HANDLE>(_nativeHandle));
-            _nativeHandle = nullptr;
         }
     }
 
@@ -128,14 +79,21 @@ namespace device_transport
 
     uint32_t SerialPort::bytesInDriverQueue() const
     {
-        if (_nativeHandle == nullptr)
+        std::lock_guard<std::mutex> lock(_nativeHandleMutex);
+        if (_nativeHandle == nullptr || _connectionLost)
         {
             return 0;
         }
 
         DWORD errors = 0;
         COMSTAT status{};
-        ClearCommError(static_cast<HANDLE>(_nativeHandle), &errors, &status);
+        if (!ClearCommError(static_cast<HANDLE>(_nativeHandle), &errors, &status))
+        {
+            _connectionLost = true;
+            _inputCondition.notify_all();
+            return 0;
+        }
+
         return static_cast<uint32_t>(status.cbInQue);
     }
 
@@ -145,12 +103,12 @@ namespace device_transport
         if (timeoutMs == 0)
         {
             _inputCondition.wait(lock, [this, byteCount]
-                                 { return _inputBuffer.size() >= byteCount || !_running; });
+                                 { return _inputBuffer.size() >= byteCount || !_running || !isOpen(); });
             return _inputBuffer.size() >= byteCount;
         }
 
         return _inputCondition.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this, byteCount]
-                                        { return _inputBuffer.size() >= byteCount || !_running; }) &&
+                                        { return _inputBuffer.size() >= byteCount || !_running || !isOpen(); }) &&
                _inputBuffer.size() >= byteCount;
     }
 
@@ -240,7 +198,7 @@ namespace device_transport
 
     uint32_t SerialPort::send()
     {
-        if (_nativeHandle == nullptr)
+        if (!isOpen())
         {
             return 0;
         }
@@ -252,19 +210,111 @@ namespace device_transport
         }
 
         uint32_t totalWritten = 0;
-        while (totalWritten < bytes.size())
         {
-            DWORD bytesWritten = 0;
-            const DWORD remaining = static_cast<DWORD>(bytes.size() - totalWritten);
-            if (!WriteFile(static_cast<HANDLE>(_nativeHandle), bytes.data() + totalWritten, remaining, &bytesWritten, nullptr) || bytesWritten == 0)
+            std::lock_guard<std::mutex> nativeLock(_nativeHandleMutex);
+            if (_nativeHandle == nullptr || _connectionLost)
             {
-                break;
+                return 0;
             }
 
-            totalWritten += bytesWritten;
+            while (totalWritten < bytes.size())
+            {
+                DWORD bytesWritten = 0;
+                const DWORD remaining = static_cast<DWORD>(bytes.size() - totalWritten);
+                if (!WriteFile(static_cast<HANDLE>(_nativeHandle), bytes.data() + totalWritten, remaining, &bytesWritten, nullptr) || bytesWritten == 0)
+                {
+                    _connectionLost = true;
+                    _inputCondition.notify_all();
+                    break;
+                }
+
+                totalWritten += bytesWritten;
+            }
         }
 
         return totalWritten;
+    }
+
+    TransportError SerialPort::_openNativeHandle()
+    {
+        HANDLE handle = CreateFileA(_portName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            return TransportError::openFailed;
+        }
+
+        DCB dcb{};
+        dcb.DCBlength = sizeof(dcb);
+        if (!GetCommState(handle, &dcb))
+        {
+            CloseHandle(handle);
+            return TransportError::stateReadFailed;
+        }
+
+        dcb.BaudRate = static_cast<DWORD>(_baudRate);
+        dcb.ByteSize = 8;
+        dcb.StopBits = ONESTOPBIT;
+        dcb.Parity = NOPARITY;
+        dcb.fBinary = TRUE;
+        dcb.fParity = FALSE;
+        dcb.fOutxCtsFlow = FALSE;
+        dcb.fOutxDsrFlow = FALSE;
+        dcb.fDsrSensitivity = FALSE;
+        dcb.fOutX = FALSE;
+        dcb.fInX = FALSE;
+        dcb.fAbortOnError = FALSE;
+        dcb.fDtrControl = DTR_CONTROL_DISABLE;
+        dcb.fRtsControl = RTS_CONTROL_DISABLE;
+
+        if (!SetCommState(handle, &dcb))
+        {
+            CloseHandle(handle);
+            return TransportError::configureFailed;
+        }
+
+        COMMTIMEOUTS timeouts{};
+        timeouts.ReadIntervalTimeout = MAXDWORD;
+        timeouts.ReadTotalTimeoutConstant = 0;
+        timeouts.ReadTotalTimeoutMultiplier = 0;
+        timeouts.WriteTotalTimeoutConstant = 50;
+        timeouts.WriteTotalTimeoutMultiplier = 0;
+        if (!SetCommTimeouts(handle, &timeouts))
+        {
+            CloseHandle(handle);
+            return TransportError::timeoutConfigureFailed;
+        }
+
+        std::lock_guard<std::mutex> lock(_nativeHandleMutex);
+        if (_nativeHandle != nullptr)
+        {
+            PurgeComm(static_cast<HANDLE>(_nativeHandle), PURGE_RXABORT | PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR);
+            CloseHandle(static_cast<HANDLE>(_nativeHandle));
+        }
+
+        _nativeHandle = handle;
+        _connectionLost = false;
+        return TransportError::ok;
+    }
+
+    void SerialPort::_closeNativeHandle()
+    {
+        std::lock_guard<std::mutex> lock(_nativeHandleMutex);
+        if (_nativeHandle == nullptr)
+        {
+            return;
+        }
+
+        HANDLE handle = static_cast<HANDLE>(_nativeHandle);
+        PurgeComm(handle, PURGE_RXABORT | PURGE_RXCLEAR | PURGE_TXABORT | PURGE_TXCLEAR);
+        CloseHandle(handle);
+        _nativeHandle = nullptr;
+        _connectionLost = false;
+    }
+
+    void SerialPort::_markConnectionLost()
+    {
+        _connectionLost = true;
+        _inputCondition.notify_all();
     }
 
     void SerialPort::_readerLoop()
@@ -273,6 +323,19 @@ namespace device_transport
 
         while (_running)
         {
+            if (!isOpen())
+            {
+                _closeNativeHandle();
+                while (_running && _openNativeHandle() != TransportError::ok)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                }
+
+                clearInputBuffer();
+                _inputCondition.notify_all();
+                continue;
+            }
+
             const uint32_t queuedBytes = bytesInDriverQueue();
             if (queuedBytes == 0)
             {
@@ -282,10 +345,18 @@ namespace device_transport
 
             DWORD receivedSize = 0;
             const DWORD bytesToRead = static_cast<DWORD>(std::min<size_t>(chunk.size(), queuedBytes));
-            if (!ReadFile(static_cast<HANDLE>(_nativeHandle), chunk.data(), bytesToRead, &receivedSize, nullptr))
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
+                std::lock_guard<std::mutex> nativeLock(_nativeHandleMutex);
+                if (_nativeHandle == nullptr || _connectionLost)
+                {
+                    continue;
+                }
+
+                if (!ReadFile(static_cast<HANDLE>(_nativeHandle), chunk.data(), bytesToRead, &receivedSize, nullptr))
+                {
+                    _markConnectionLost();
+                    continue;
+                }
             }
 
             if (receivedSize > 0)

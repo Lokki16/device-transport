@@ -48,16 +48,23 @@ namespace device_transport
 
     private:
         void *_nativeHandle = nullptr;
+        std::string _portName;
+        uint32_t _baudRate{};
 
         std::atomic<bool> _running{false};
+        mutable std::atomic<bool> _connectionLost{false};
         std::thread _readerThread;
 
         std::vector<uint8_t> _inputBuffer;
         std::vector<uint8_t> _outputBuffer;
+        mutable std::mutex _nativeHandleMutex;
         mutable std::mutex _inputMutex;
         mutable std::mutex _outputMutex;
-        std::condition_variable _inputCondition;
+        mutable std::condition_variable _inputCondition;
 
+        TransportError _openNativeHandle();
+        void _closeNativeHandle();
+        void _markConnectionLost();
         void _readerLoop();
     };
 }

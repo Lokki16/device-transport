@@ -568,7 +568,13 @@ namespace device_transport
 
         while (_running)
         {
-            if (!_serialPort.waitForInputSize(1, 0))
+            if (!_serialPort.isOpen())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
+
+            if (!_serialPort.waitForInputSize(1, 100))
             {
                 continue;
             }
