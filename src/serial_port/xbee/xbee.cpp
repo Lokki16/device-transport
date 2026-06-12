@@ -246,7 +246,7 @@ namespace device_transport
         {
             std::lock_guard<std::mutex> commandLock(_commandMutex);
             _clearFrameData();
-            byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+            byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
             byte_codec::write8(_frameData, frameId);
             byte_codec::write16(_frameData, atCommand);
             _sendFrameData();
@@ -273,7 +273,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write16(_frameData, atCommand);
         return _sendFrameData();
@@ -283,7 +283,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write8(_frameData, value);
@@ -294,7 +294,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write16(_frameData, value);
@@ -305,7 +305,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write32(_frameData, value);
@@ -316,7 +316,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> commandLock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::atCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::atCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write16(_frameData, atCommand);
         byte_codec::write64(_frameData, value);
@@ -327,7 +327,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::remoteAtCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::remoteAtCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -340,7 +340,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::remoteAtCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::remoteAtCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -354,7 +354,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::remoteAtCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::remoteAtCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -368,7 +368,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::remoteAtCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::remoteAtCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -382,7 +382,7 @@ namespace device_transport
     {
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::remoteAtCommandRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::remoteAtCommandRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -402,7 +402,7 @@ namespace device_transport
 
         std::lock_guard<std::mutex> lock(_commandMutex);
         _clearFrameData();
-        byte_codec::write8(_frameData, api_frame::type::transmitRequest);
+        byte_codec::write8(_frameData, api_frame::frame_type::transmitRequest);
         byte_codec::write8(_frameData, api_frame::defaultFrameId);
         byte_codec::write64(_frameData, destinationSn);
         byte_codec::write16(_frameData, destinationNa);
@@ -634,7 +634,7 @@ namespace device_transport
                     _trace(SerialTraceDirection::rx, frame.data, frame.size);
                 }
 
-                if (frameType == api_frame::type::atCommandResponse && frame.size >= 5)
+                if (frameType == api_frame::frame_type::atCommandResponse && frame.size >= 5)
                 {
                     const uint8_t frameId = frame.data[1];
                     const uint16_t atCommand = byte_codec::read16(frameData, 2);
@@ -654,7 +654,7 @@ namespace device_transport
                     continue;
                 }
 
-                if (frameType == api_frame::type::receivePacket && frame.size >= 12)
+                if (frameType == api_frame::frame_type::receivePacket && frame.size >= 12)
                 {
                     ReceivedXBeeFrame payload;
                     payload.xbee64Id = byte_codec::read64(frameData, 1);
@@ -669,7 +669,7 @@ namespace device_transport
                     continue;
                 }
 
-                if (frameType == api_frame::type::explicitReceiveIndicator && frame.size >= 18)
+                if (frameType == api_frame::frame_type::explicitReceiveIndicator && frame.size >= 18)
                 {
                     ReceivedXBeeFrame payload;
                     payload.xbee64Id = byte_codec::read64(frameData, 1);

@@ -19,7 +19,7 @@ namespace device_transport
             api2 = 2
         };
 
-        namespace type
+        namespace frame_type
         {
             static constexpr uint8_t atCommandRequest = 0x08;
             static constexpr uint8_t atCommandQueueParameterValue = 0x09;
